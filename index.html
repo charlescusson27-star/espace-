@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LE QG - Espace Collaboratif Lycée</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- SDK Firebase v10 -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        :root {
+            --custom-btn-bg: #d97706;
+            --custom-card-bg: rgba(10, 10, 10, 0.9);
+            --custom-border-color: rgba(245, 158, 11, 0.4);
+        }
+        .dyn-btn { background-color: var(--custom-btn-bg) !important; }
+        .dyn-btn:hover { filter: brightness(1.15); }
+        .dyn-card { background-color: var(--custom-card-bg) !important; border-color: var(--custom-border-color) !important; }
+    </style>
+</head>
+<body id="body-theme" class="bg-stone-950 text-amber-50 h-full flex flex-col font-sans bg-cover bg-center bg-fixed relative overflow-hidden">
+
+    <div id="app" class="h-full flex flex-col flex-1 backdrop-blur-sm bg-black/60 z-10 relative overflow-hidden">
+        <div class="flex-1 flex items-center justify-center p-4 text-center">
+            <div class="space-y-3">
+                <div class="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                <p class="text-amber-200 text-sm font-medium">Connexion au Cloud Firebase...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Visionneuse -->
+    <div id="file-viewer-modal" class="hidden fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4">
+        <div class="w-full max-w-5xl h-[85vh] dyn-card border rounded-3xl p-6 shadow-2xl flex flex-col space-y-4">
+            <div class="flex justify-between items-center border-b border-amber-900/40 pb-3">
+                <h3 id="viewer-title" class="font-black text-lg text-amber-400">Aperçu du Document</h3>
+                <div class="flex gap-2 items-center">
+                    <a id="viewer-open-tab" href="#" target="_blank" class="px-3 py-1.5 bg-stone-900 text-amber-200 border rounded-xl text-xs font-bold flex items-center gap-1.5"><i class="fa-solid fa-external-link-alt"></i> Ouvrir</a>
+                    <a id="viewer-download-btn" href="#" download class="px-3 py-1.5 dyn-btn text-white rounded-xl text-xs font-bold flex items-center gap-1.5"><i class="fa-solid fa-download"></i> Télécharger</a>
+                    <button onclick="toggleModal('file-viewer-modal', false)" class="text-amber-200/70 hover:text-white p-2"><i class="fa-solid fa-xmark text-xl"></i></button>
+                </div>
+            </div>
+            <div id="viewer-content-container" class="flex-1 bg-stone-900 rounded-2xl overflow-hidden border border-amber-900/40 flex items-center justify-center"></div>
+        </div>
+    </div>
+
+    <!-- Toast Global -->
+    <div id="global-notification-toast" class="hidden fixed bottom-6 right-6 z-50 max-w-sm dyn-card border-2 border-amber-500 p-4 rounded-2xl shadow-2xl flex items-start gap-3">
+        <div class="text-amber-400 text-2xl"><i class="fa-solid fa-bell"></i></div>
+        <div class="flex-1 space-y-1">
+            <h4 class="font-bold text-xs text-amber-300" id="toast-title">LE QG</h4>
+            <p class="text-xs text-amber-100" id="toast-msg"></p>
+        </div>
+        <button onclick="toggleModal('global-notification-toast', false)" class="text-amber-200/50"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyDQp8qnPJ64u0dBMaSnOZN31BV30QaHz3k",
+            authDomain: "lqgp-9d3e0.firebaseapp.com",
+            projectId: "lqgp-9d3e0",
+            storageBucket: "lqgp-9d3e0.firebasestorage.app",
+            messagingSenderId: "542617927378",
+            appId: "1:542617927378:web:90aeb0b57805dabf27b70b"
+        };
+        
+        let db = null;
+        try {
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+        } catch(e) {
+            console.error("Erreur d'initialisation Firebase :", e);
+        }
+
+        const ADMIN_EMAIL = "charlescusson27@gmail.com";
+
+        // Moteur de stockage 100% Cloud Firebase (sans localStorage pour les données partagées)
+        let cloudData = {
+            users: [],
+            messages: [],
+            ideas_board: [],
+            countdowns: [{ id: 1, title: 'Épreuves du Bac Pro', date: '2026-06-15T08:00' }],
+            quizzes: [],
+            quiz_submissions: {},
+            custom_pages: [],
+            hidden_pages: [],
+            admin_calendar: [],
+            appreciations: {},
+            revision_sheets: [],
+            exam_subjects: [],
+            site_colors: { btnColor: '#d97706', cardBg: 'rgba(10, 10, 10, 0.9)', borderColor: 'rgba(245, 158, 11, 0.4)' },
+            home_qr_image: ''
+        };
+
+        const DB = {
+            get(k) {
+                return cloudData[k] !== undefined ? cloudData[k] : null;
+            },
+            async set(k, val) {
+                cloudData[k] = val;
+                if (db) {
+                    try {
+                        await db.collection("leqg_data").doc(k).set({ value: val });
+                    } catch(err) {
+                        console.error("Erreur d'écriture Firebase sur " + k, err);
+                    }
+                }
+                render();
+            }
+        };
+
+        let state = {
+            tab: 'home',
+            sidebar: false,
+            chatMode: 'general',
+            targetUser: null,
+            adminSub: 'users',
+            activeQuizId: null
+        };
+
+        async function init() {
+            if (db) {
+                try {
+                    const keys = Object.keys(cloudData);
+                    for (let k of keys) {
+                        let doc = await db.collection("leqg_data").doc(k).get();
+                        if (doc.exists) {
+                            cloudData[k] = doc.data().value;
+                        } else {
+                            // Initialisation initiale dans Firebase si vide
+                            await db.collection("leqg_data").doc(k).set({ value: cloudData[k] });
+                        }
+                    }
+
+                    // Création du compte admin par défaut si la base utilisateurs est vide
+                    let users = cloudData.users || [];
+                    if (users.length === 0) {
+                        cloudData.users = [
+                            { username: 'admin', lastName: 'Délégué Principal', password: 'admin20', role: 'admin', status: 'active', mustChangePass: true, birthday: '2009-03-26', email: ADMIN_EMAIL, permissions: {} },
+                            { username: 'delegue1', lastName: 'Adjoint 1', password: 'pass123', role: 'delegate', status: 'active', mustChangePass: false, birthday: '2009-01-01', email: '', permissions: { users: true, quizzes: true } },
+                            { username: 'delegue2', lastName: 'Adjoint 2', password: 'pass123', role: 'delegate', status: 'active', mustChangePass: false, birthday: '2009-01-01', email: '', permissions: { ideas: true, calendar: true } },
+                            { username: 'delegue3', lastName: 'Adjoint 3', password: 'pass123', role: 'delegate', status: 'active', mustChangePass: false, birthday: '2009-01-01', email: '', permissions: { pages: true, revisions: true } }
+                        ];
+                        await db.collection("leqg_data").doc("users").set({ value: cloudData.users });
+                    }
+                } catch(e) {
+                    console.error("Erreur de chargement Firebase :", e);
+                }
+            }
+
+            render();
+
+            // Actualisation automatique en temps réel depuis le cloud toutes les 15 secondes
+            setInterval(async () => {
+                if (db) {
+                    try {
+                        const keys = Object.keys(cloudData);
+                        for (let k of keys) {
+                            let doc = await db.collection("leqg_data").doc(k).get();
+                            if (doc.exists) {
+                                cloudData[k] = doc.data().value;
+                            }
+                        }
+                    } catch(e){}
+                }
+            }, 15000);
+        }
+
+        function getCurrentUser() { 
+            let u = sessionStorage.getItem('leqg_current_user');
+            return u ? JSON.parse(u) : null; 
+        }
+
+        function showToast(title, msg) {
+            document.getElementById('toast-title').textContent = title;
+            document.getElementById('toast-msg').textContent = msg;
+            document.getElementById('global-notification-toast').classList.remove('hidden');
+            setTimeout(() => document.getElementById('global-notification-toast').classList.add('hidden'), 5000);
+        }
+
+        function toggleModal(id, show) { 
+            document.getElementById(id).classList.toggle('hidden', !show); 
+        }
+
+        function openFileViewer(title, url, type) {
+            document.getElementById('viewer-title').textContent = title;
+            document.getElementById('viewer-download-btn').href = url;
+            document.getElementById('viewer-open-tab').href = url;
+            let c = document.getElementById('viewer-content-container');
+            c.innerHTML = type.includes('pdf') ? `<embed src="${url}" type="application/pdf" width="100%" height="100%" />` : `<img src="${url}" class="max-h-full object-contain rounded-xl" />`;
+            toggleModal('file-viewer-modal', true);
+        }
+
+        function render() {
+            let app = document.getElementById('app'), user = getCurrentUser();
+            if (!user) return app.innerHTML = renderLogin();
+            if (user.status === 'masked') return app.innerHTML = `<div class="flex-1 flex flex-col items-center justify-center p-6 text-center"><h1 class="text-xl font-bold text-red-400">Compte Suspendu</h1><button onclick="logout()" class="mt-4 px-4 py-2 dyn-btn text-white rounded-xl text-xs">Déconnexion</button></div>`;
+            if (user.mustChangePass) return app.innerHTML = renderSetup();
+            app.innerHTML = renderDashboard(user);
+        }
+
+        function renderLogin() {
+            return `<div class="flex-1 flex items-center justify-center p-4"><div class="w-full max-w-md dyn-card border rounded-3xl p-8 shadow-2xl space-y-6 text-center">
+                <div class="p-3 bg-amber-500/10 text-amber-400 rounded-2xl text-3xl inline-block"><i class="fa-solid fa-chess-rook"></i></div>
+                <h1 class="text-2xl font-black text-white">LE QG</h1>
+                <form onsubmit="handleLogin(event)" class="space-y-3 text-left">
+                    <input type="text" id="l-user" required placeholder="Identifiant..." class="w-full px-4 py-3 bg-stone-900 border rounded-2xl text-xs text-amber-100">
+                    <input type="password" id="l-pass" required placeholder="Mot de passe..." class="w-full px-4 py-3 bg-stone-900 border rounded-2xl text-xs text-amber-100">
+                    <button type="submit" class="w-full py-3 dyn-btn text-xs text-white font-bold rounded-2xl">Se connecter</button>
+                </form></div></div>`;
+        }
+
+        function renderSetup() {
+            return `<div class="flex-1 flex items-center justify-center p-4"><div class="w-full max-w-md dyn-card border rounded-3xl p-8 shadow-2xl space-y-4">
+                <h1 class="text-lg font-bold text-amber-400">Première Connexion</h1>
+                <form onsubmit="saveSetup(event)" class="space-y-3 text-xs">
+                    <input type="text" id="s-lastname" required placeholder="Nom de famille" class="w-full p-3 bg-stone-900 border rounded-xl text-white">
+                    <input type="email" id="s-email" placeholder="E-mail (ex: charlescusson27@gmail.com)" class="w-full p-3 bg-stone-900 border rounded-xl text-white">
+                    <input type="password" id="s-pass" required placeholder="Nouveau mot de passe" class="w-full p-3 bg-stone-900 border rounded-xl text-white">
+                    <input type="date" id="s-bday" required class="w-full p-3 bg-stone-900 border rounded-xl text-white">
+                    <button type="submit" class="w-full py-3 dyn-btn text-white font-bold rounded-xl">Valider</button>
+                </form></div></div>`;
+        }
+
+        function renderDashboard(user) {
+            let hidden = DB.get('hidden_pages') || [], custom = DB.get('custom_pages') || [];
+            let navs = custom.filter(p => !hidden.includes('page_' + p.id)).map(p => sbBtn('page_' + p.id, p.title, p.icon || 'file-lines')).join('');
+            let canAccessAdmin = user.role === 'admin' || user.role === 'delegate';
+
+            return `
+                <header class="bg-stone-950/80 border-b border-amber-900/40 px-4 py-3 flex justify-between items-center backdrop-blur-md">
+                    <div class="flex items-center gap-3">
+                        <button onclick="state.sidebar=!state.sidebar;render()" class="p-2 bg-stone-900 text-amber-100 rounded-xl"><i class="fa-solid fa-bars"></i></button>
+                        <span class="font-black text-amber-400 text-sm">LE QG (${user.username})</span>
+                    </div>
+                    <button onclick="logout()" class="px-3 py-1.5 bg-stone-900 text-amber-200 text-xs rounded-xl border">Déconnexion</button>
+                </header>
+                <div class="flex-1 flex overflow-hidden relative">
+                    <aside class="fixed inset-y-0 left-0 z-30 w-64 bg-stone-950/95 border-r border-amber-900/40 transform ${state.sidebar ? 'translate-x-0' : '-translate-x-full'} transition-transform flex flex-col p-4 pt-16 space-y-1 text-xs overflow-y-auto">
+                        ${!hidden.includes('home') ? sbBtn('home', 'Accueil & QR Code', 'house') : ''}
+                        ${!hidden.includes('appreciations') ? sbBtn('appreciations', 'Mes Appréciations', 'award') : ''}
+                        ${!hidden.includes('chat') ? sbBtn('chat', 'Messagerie', 'comments') : ''}
+                        ${!hidden.includes('calendar') ? sbBtn('calendar', 'Agenda', 'calendar-days') : ''}
+                        ${!hidden.includes('quizzes') ? sbBtn('quizzes', 'Quiz & Résultats', 'brain') : ''}
+                        ${!hidden.includes('revisions') ? sbBtn('revisions', 'Fiches de Révision', 'book-open') : ''}
+                        ${!hidden.includes('exams') ? sbBtn('exams', 'Sujets & Exercices', 'graduation-cap') : ''}
+                        ${!hidden.includes('ideas') ? sbBtn('ideas', 'Boîte à Idées', 'lightbulb') : ''}
+                        ${!hidden.includes('notes') ? sbBtn('notes', 'Bloc-Notes', 'note-sticky') : ''}
+                        ${navs}
+                        ${canAccessAdmin ? sbBtn('admin', 'Espace Délégué', 'user-gear', 'text-amber-400 bg-amber-500/10') : ''}
+                    </aside>
+                    <main class="flex-1 overflow-y-auto p-4 md:p-6">${renderContent(user)}</main>
+                </div>`;
+        }
+
+        function sbBtn(id, label, icon, extra = '') {
+            let active = state.tab === id;
+            return `<button onclick="state.tab='${id}';state.sidebar=false;render()" class="w-full text-left px-3 py-2.5 rounded-xl flex items-center gap-3 border transition-all ${active ? 'dyn-btn text-white font-bold' : 'text-amber-200/80 bg-stone-900/50 border-transparent hover:bg-stone-900'} ${extra}"><i class="fa-solid fa-${icon} w-4"></i> ${label}</button>`;
+        }
+
+        function renderContent(user) {
+            if (state.tab.startsWith('page_')) {
+                let cp = (DB.get('custom_pages') || []).find(x => x.id == state.tab.replace('page_', ''));
+                return cp ? `<div class="max-w-3xl mx-auto dyn-card border p-6 rounded-3xl space-y-4"><h2 class="text-2xl font-black text-amber-400">${cp.title}</h2>${cp.elements.map(e => e.type === 'text' ? `<p class="text-xs text-amber-100 whitespace-pre-wrap">${e.content}</p>` : `<button onclick="openFileViewer('${e.title}', '${e.fileData}', '${e.fileType}')" class="px-4 py-2 dyn-btn text-white rounded-xl text-xs font-bold">${e.title}</button>`).join('')}</div>` : '';
+            }
+            if (state.tab === 'home') return renderHome();
+            if (state.tab === 'appreciations') return renderUserAppreciations(user);
+            if (state.tab === 'chat') return renderChat(user);
+            if (state.tab === 'calendar') return `<div class="max-w-3xl mx-auto dyn-card border p-6 rounded-3xl"><h2 class="text-xl font-black text-amber-400">Agenda</h2></div>`;
+            if (state.tab === 'quizzes') return renderQuizzesTab(user);
+            if (state.tab === 'revisions') return renderDocPage('Fiches de Révision', DB.get('revision_sheets') || []);
+            if (state.tab === 'exams') return renderDocPage('Sujets Bac & Exercices', DB.get('exam_subjects') || []);
+            if (state.tab === 'ideas') return renderIdeasPage(user);
+            if (state.tab === 'notes') return renderNotesPage(user);
+            if (state.tab === 'admin' && (user.role === 'admin' || user.role === 'delegate')) return renderAdmin(user);
+            return '';
+        }
+
+        function renderHome() {
+            let qr = DB.get('home_qr_image') || '';
+            return `<div class="max-w-3xl mx-auto space-y-6 text-center">
+                <div class="dyn-card border p-8 space-y-3 rounded-3xl"><h2 class="text-2xl font-black text-white">Bienvenue sur LE QG</h2><p class="text-xs text-amber-200/75">Ton espace collaboratif de lycée.</p></div>
+                <div class="dyn-card border p-6 rounded-3xl space-y-3">
+                    <h3 class="font-bold text-amber-400 text-sm"><i class="fa-solid fa-qrcode mr-2"></i>QR Code d'accès mobile</h3>
+                    ${qr ? `<div class="bg-white p-3 inline-block rounded-2xl"><img src="${qr}" width="150" height="150"/></div>` : `<p class="text-xs text-amber-200/50">Aucun QR code configuré.</p>`}
+                </div>
+            </div>`;
+        }
+
+        function renderUserAppreciations(user) {
+            let all = DB.get('appreciations') || {}, myApp = all[user.username] || { t1: '', t2: '', t3: '', published: false };
+            if (!myApp.published) return `<div class="max-w-2xl mx-auto dyn-card border p-8 text-center rounded-3xl"><i class="fa-solid fa-lock text-4xl text-amber-400"></i><h2 class="text-xl font-bold text-white">Appréciations</h2><p class="text-xs text-amber-200/70 mt-2">Non publiées par le délégué pour le moment.</p></div>`;
+            return `<div class="max-w-3xl mx-auto space-y-4 text-xs">
+                <div class="dyn-card border p-6 rounded-3xl"><h2 class="text-xl font-black text-amber-400">Mes Appréciations</h2></div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div class="dyn-card border p-4 rounded-2xl"><h4 class="font-bold text-amber-300">Trimestre 1</h4><p class="mt-2 text-amber-100">${myApp.t1 || 'Aucune'}</p></div>
+                    <div class="dyn-card border p-4 rounded-2xl"><h4 class="font-bold text-amber-300">Trimestre 2</h4><p class="mt-2 text-amber-100">${myApp.t2 || 'Aucune'}</p></div>
+                    <div class="dyn-card border p-4 rounded-2xl"><h4 class="font-bold text-amber-300">Trimestre 3</h4><p class="mt-2 text-amber-100">${myApp.t3 || 'Aucune'}</p></div>
+                </div></div>`;
+        }
+
+        function renderQuizzesTab(user) {
+            let quizzes = DB.get('quizzes') || [], subs = DB.get('quiz_submissions') || {}, mySubs = subs[user.username] || [];
+            if (state.activeQuizId) {
+                let q = quizzes.find(x => x.id === state.activeQuizId);
+                return q ? renderActiveQuiz(q) : '';
+            }
+            return `<div class="max-w-3xl mx-auto space-y-4 text-xs">
+                <div class="dyn-card border p-6 rounded-3xl"><h2 class="text-xl font-black text-amber-400">Quiz Disponibles</h2></div>
+                <div class="space-y-2">${quizzes.map(q => `<div class="dyn-card border p-4 rounded-2xl flex justify-between items-center"><div><h4 class="font-bold text-amber-200">${q.title}</h4><p class="text-[10px] text-amber-200/50">${q.questions.length} question(s)</p></div><button onclick="state.activeQuizId=${q.id};render()" class="px-3 py-1.5 dyn-btn text-white rounded-xl font-bold">Lancer</button></div>`).join('')}</div>
+                <div class="dyn-card border p-6 rounded-3xl space-y-2 mt-6">
+                    <h3 class="font-bold text-amber-300">Historique de mes résultats</h3>
+                    ${mySubs.map(s => `<div class="p-2 bg-stone-900 rounded-xl flex justify-between"><span>${s.quizTitle} (${s.date})</span><span class="font-bold text-amber-400">${s.score} / ${s.total}</span></div>`).join('')}
+                </div></div>`;
+        }
+
+        function renderActiveQuiz(quiz) {
+            return `<div class="max-w-2xl mx-auto dyn-card border p-6 rounded-3xl space-y-4 text-xs">
+                <div class="flex justify-between items-center border-b pb-2"><h2 class="text-lg font-black text-amber-400">${quiz.title}</h2><button onclick="state.activeQuizId=null;render()" class="text-amber-200">Quitter</button></div>
+                <form onsubmit="submitQuiz(event, ${quiz.id})" class="space-y-4">
+                    ${quiz.questions.map((q, qIdx) => `<div class="p-3 bg-stone-900 border rounded-xl space-y-2"><p class="font-bold text-amber-100">Q${qIdx+1}: ${q.question}</p><div class="space-y-1">${q.options.map((opt, oIdx) => `<label class="block p-2 bg-stone-950 border rounded-lg cursor-pointer flex items-center gap-2"><input type="radio" name="q_${qIdx}" value="${oIdx}" required><span>${opt}</span></label>`).join('')}</div></div>`).join('')}
+                    <button type="submit" class="w-full py-2.5 dyn-btn text-white font-bold rounded-xl">Valider mes réponses</button>
+                </form></div>`;
+        }
+
+        async function submitQuiz(e, quizId) {
+            e.preventDefault();
+            let quizzes = DB.get('quizzes') || [];
+            let quiz = quizzes.find(x => x.id === quizId), score = 0;
+            quiz.questions.forEach((q, idx) => {
+                let sel = document.querySelector(`input[name="q_${idx}"]:checked`);
+                if (sel && parseInt(sel.value) === parseInt(q.correct)) score++;
+            });
+            let user = getCurrentUser(), subs = DB.get('quiz_submissions') || {};
+            if (!subs[user.username]) subs[user.username] = [];
+            subs[user.username].push({ quizId, quizTitle: quiz.title, score, total: quiz.questions.length, date: new Date().toLocaleDateString() });
+            await DB.set('quiz_submissions', subs);
+            showToast("Quiz validé !", `Tu as obtenu ${score} / ${quiz.questions.length}`);
+            state.activeQuizId = null; render();
+        }
+
+        function renderDocPage(title, items) {
+            return `<div class="max-w-3xl mx-auto space-y-4 text-xs">
+                <div class="dyn-card border p-6 rounded-3xl"><h2 class="text-xl font-black text-amber-400">${title}</h2></div>
+                <div class="space-y-2">
+                    ${items.map(d => `
+                        <div class="dyn-card border p-4 rounded-2xl flex justify-between items-center flex-wrap gap-2">
+                            <h4 class="font-bold text-amber-100">${d.title}</h4>
+                            <div class="flex gap-2">
+                                <button onclick="openFileViewer('${d.title}', '${d.fileData}', '${d.fileType}')" class="px-3 py-1.5 bg-sky-600 text-white rounded-xl font-bold"><i class="fa-solid fa-eye mr-1"></i> Aperçu</button>
+                                <a href="${d.fileData}" target="_blank" class="px-3 py-1.5 bg-stone-900 border text-amber-200 rounded-xl font-bold"><i class="fa-solid fa-external-link-alt mr-1"></i> Ouvrir</a>
+                                <a href="${d.fileData}" download="${d.title}" class="px-3 py-1.5 dyn-btn text-white rounded-xl font-bold"><i class="fa-solid fa-download mr-1"></i> Télécharger</a>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+        }
+
+        function renderIdeasPage() {
+            let ideas = DB.get('ideas_board') || [];
+            return `<div class="max-w-2xl mx-auto space-y-4 text-xs">
+                <div class="dyn-card border p-6 rounded-3xl space-y-3"><h2 class="text-xl font-black text-amber-400">Boîte à Idées</h2>
+                <form onsubmit="submitIdea(event)" class="space-y-2"><input type="text" id="i-title" required placeholder="Titre..." class="w-full p-2.5 bg-stone-900 border rounded-xl"><textarea id="i-desc" required placeholder="Description..." class="w-full p-2.5 bg-stone-900 border rounded-xl h-16 resize-none"></textarea><button type="submit" class="w-full py-2 dyn-btn text-white rounded-xl font-bold">Proposer</button></form></div>
+                <div class="space-y-2">${ideas.map((i, idx)=>`<div class="dyn-card border p-4 rounded-2xl space-y-2"><h4 class="font-bold text-amber-200">${i.title} (${i.author})</h4><p class="text-amber-100">${i.desc}</p><div class="flex gap-2"><button onclick="voteIdea(${idx}, 'up')" class="px-2 py-1 bg-emerald-600/20 text-emerald-300 rounded-lg">Pour (${i.votesUp||0})</button><button onclick="voteIdea(${idx}, 'down')" class="px-2 py-1 bg-red-600/20 text-red-300 rounded-lg">Contre (${i.votesDown||0})</button></div></div>`).join('')}</div></div>`;
+        }
+        async function submitIdea(e) {
+            e.preventDefault();
+            let ideas = DB.get('ideas_board') || [];
+            ideas.push({ title: document.getElementById('i-title').value, desc: document.getElementById('i-desc').value, author: getCurrentUser().username, votesUp: 0, votesDown: 0 });
+            await DB.set('ideas_board', ideas);
+        }
+        async function voteIdea(idx, type) {
+            let ideas = DB.get('ideas_board') || [];
+            ideas[idx][type === 'up' ? 'votesUp' : 'votesDown']++;
+            await DB.set('ideas_board', ideas);
+        }
+
+        function renderNotesPage(user) {
+            return `<div class="max-w-2xl mx-auto dyn-card border p-6 h-[450px] flex flex-col rounded-3xl space-y-2 text-xs"><h2 class="text-xl font-bold text-amber-400">Bloc-Notes</h2><textarea oninput="localStorage.setItem('leqg_note_${user.username}', this.value)" class="flex-1 w-full bg-stone-900 border p-3 rounded-xl text-amber-100 resize-none">${localStorage.getItem('leqg_note_'+user.username)||''}</textarea></div>`;
+        }
+
+        function renderChat(user) {
+            let users = DB.get('users') || [], msgs = DB.get('messages') || [];
+            let active = state.chatMode === 'general' ? msgs.filter(m => m.type === 'general') : msgs.filter(m => m.type === 'private' && (m.sender === user.username && m.recipient === state.targetUser || m.sender === state.targetUser && m.recipient === user.username));
+            return `<div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-4 h-[500px] text-xs">
+                <div class="dyn-card border p-3 flex flex-col space-y-2 rounded-3xl"><button onclick="state.chatMode='general';render()" class="p-2 rounded-xl bg-stone-900 font-bold text-amber-200">Général</button><div class="flex-1 overflow-y-auto space-y-1">${users.filter(u=>u.username!==user.username).map(u=>`<button onclick="state.chatMode='private';state.targetUser='${u.username}';render()" class="w-full text-left p-2 rounded-xl bg-stone-900 text-amber-200">${u.username}</button>`).join('')}</div></div>
+                <div class="md:col-span-3 dyn-card border p-4 flex flex-col justify-between rounded-3xl"><div class="flex-1 overflow-y-auto space-y-2 bg-stone-900/40 p-3 rounded-2xl">${active.map(m=>`<div class="p-2.5 bg-stone-950 rounded-xl space-y-1"><span class="font-bold text-amber-400">${m.sender}:</span> <p class="text-amber-100">${m.text}</p></div>`).join('')}</div>
+                <form onsubmit="sendChat(event)" class="flex gap-2 pt-2"><input type="text" id="c-inp" required placeholder="Message..." class="flex-1 p-2.5 bg-stone-900 border rounded-xl text-amber-100"><button type="submit" class="dyn-btn px-4 text-white rounded-xl font-bold">Envoyer</button></form></div></div>`;
+        }
+        async function sendChat(e) {
+            e.preventDefault();
+            let msgs = DB.get('messages') || [];
+            msgs.push({ type: state.chatMode, sender: getCurrentUser().username, recipient: state.targetUser, text: document.getElementById('c-inp').value, time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) });
+            await DB.set('messages', msgs);
+        }
+
+        function renderAdmin(user) {
+            let isMainAdmin = user.role === 'admin';
+            let perms = user.permissions || {};
+
+            return `<div class="max-w-4xl mx-auto space-y-4 text-xs">
+                <div class="dyn-card border p-4 rounded-3xl flex gap-2 flex-wrap">
+                    ${isMainAdmin || perms.users ? `<button onclick="state.adminSub='users';render()" class="px-3 py-1.5 rounded-xl font-bold ${state.adminSub==='users'?'dyn-btn text-white':'bg-stone-900'}">Comptes & Rôles</button>` : ''}
+                    ${isMainAdmin ? `<button onclick="state.adminSub='surveillance';render()" class="px-3 py-1.5 rounded-xl font-bold ${state.adminSub==='surveillance'?'dyn-btn text-white':'bg-stone-900'}">Surveillance Chat</button>` : ''}
+                    ${isMainAdmin || perms.quizzes ? `<button onclick="state.adminSub='quizzes';render()" class="px-3 py-1.5 rounded-xl font-bold ${state.adminSub==='quizzes'?'dyn-btn text-white':'bg-stone-900'}">Quiz & Résultats</button>` : ''}
+                    ${isMainAdmin || perms.appreciations ? `<button onclick="state.adminSub='appreciations';render()" class="px-3 py-1.5 rounded-xl font-bold ${state.adminSub==='appreciations'?'dyn-btn text-white':'bg-stone-900'}">Appréciations</button>` : ''}
+                    ${isMainAdmin || perms.revisions ? `<button onclick="state.adminSub='docs';render()" class="px-3 py-1.5 rounded-xl font-bold ${state.adminSub==='docs'?'dyn-btn text-white':'bg-stone-900'}">Fiches & Examens</button>` : ''}
+                    ${isMainAdmin || perms.pages ? `<button onclick="state.adminSub='pages';render()" class="px-3 py-1.5 rounded-xl font-bold ${state.adminSub==='pages'?'dyn-btn text-white':'bg-stone-900'}">Pages & Visibilité</button>` : ''}
+                    ${isMainAdmin || perms.theme ? `<button onclick="state.adminSub='theme';render()" class="px-3 py-1.5 rounded-xl font-bold ${state.adminSub==='theme'?'dyn-btn text-white':'bg-stone-900'}">Thème & QR Code</button>` : ''}
+                </div>
+                ${state.adminSub === 'users' && (isMainAdmin || perms.users) ? renderAdminUsers() : ''}
+                ${state.adminSub === 'surveillance' && isMainAdmin ? renderAdminSurveillance() : ''}
+                ${state.adminSub === 'quizzes' && (isMainAdmin || perms.quizzes) ? renderAdminQuizzes() : ''}
+                ${state.adminSub === 'appreciations' && (isMainAdmin || perms.appreciations) ? renderAdminAppreciations() : ''}
+                ${state.adminSub === 'docs' && (isMainAdmin || perms.revisions) ? renderAdminDocs() : ''}
+                ${state.adminSub === 'pages' && (isMainAdmin || perms.pages) ? renderAdminPages() : ''}
+                ${state.adminSub === 'theme' && (isMainAdmin || perms.theme) ? renderAdminTheme() : ''}
+            </div>`;
+        }
+
+        function renderAdminUsers() {
+            let users = DB.get('users') || [];
+            let students = users.filter(u => u.role === 'student');
+            let delegates = users.filter(u => u.role === 'delegate');
+
+            return `<div class="dyn-card border p-6 rounded-3xl space-y-6">
+                <div class="flex justify-between items-center flex-wrap gap-2">
+                    <h3 class="font-bold text-amber-300 text-sm">Gestion des Comptes & Rôles</h3>
+                    <button onclick="exportAllCSV()" class="px-3 py-1.5 bg-emerald-600 text-white font-bold rounded-xl">Export Tous CSV</button>
+                </div>
+                <form onsubmit="createNewUser(event)" class="p-4 bg-stone-900 rounded-2xl border space-y-3">
+                    <h4 class="font-bold text-amber-400">Créer un nouveau compte</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <input type="text" id="new-user" required placeholder="Identifiant..." class="p-2 bg-stone-950 border rounded-xl text-amber-100">
+                        <input type="text" id="new-pass" required placeholder="Mot de passe..." class="p-2 bg-stone-950 border rounded-xl text-amber-100">
+                        <select id="new-role" class="p-2 bg-stone-950 border rounded-xl text-amber-100">
+                            <option value="student">Élève</option>
+                            <option value="delegate">Délégué Adjoint</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="w-full py-2 dyn-btn text-white font-bold rounded-xl">Créer le compte</button>
+                </form>
+                <div class="space-y-3">
+                    <h4 class="font-bold text-amber-400">Délégués Adjoints (3 max)</h4>
+                    ${delegates.map(d => `
+                        <div class="p-4 bg-stone-900 rounded-2xl border space-y-3">
+                            <div class="flex justify-between items-center">
+                                <div><b>${d.username}</b> (${d.lastName || 'Adjoint'}) - MDP: <span class="text-amber-300">${d.password}</span></div>
+                                <div class="flex gap-2">
+                                    <button onclick="resetPassword('${d.username}')" class="px-2.5 py-1 bg-stone-950 text-amber-300 border rounded-lg">Changer MDP</button>
+                                    <button onclick="deleteUser('${d.username}')" class="px-2.5 py-1 bg-red-600/30 text-red-300 rounded-lg">Supprimer</button>
+                                </div>
+                            </div>
+                            <div class="border-t pt-2 space-y-1">
+                                <span class="text-[10px] text-amber-200/70 font-bold">Permissions d'accès :</span>
+                                <div class="grid grid-cols-2 md:grid-cols-6 gap-2 pt-1">
+                                    <label class="flex items-center gap-1.5"><input type="checkbox" ${d.permissions?.users?'checked':''} onchange="toggleDelegatePerm('${d.username}', 'users')"> Comptes</label>
+                                    <label class="flex items-center gap-1.5"><input type="checkbox" ${d.permissions?.quizzes?'checked':''} onchange="toggleDelegatePerm('${d.username}', 'quizzes')"> Quiz</label>
+                                    <label class="flex items-center gap-1.5"><input type="checkbox" ${d.permissions?.appreciations?'checked':''} onchange="toggleDelegatePerm('${d.username}', 'appreciations')"> Appréciations</label>
+                                    <label class="flex items-center gap-1.5"><input type="checkbox" ${d.permissions?.revisions?'checked':''} onchange="toggleDelegatePerm('${d.username}', 'revisions')"> Fiches</label>
+                                    <label class="flex items-center gap-1.5"><input type="checkbox" ${d.permissions?.pages?'checked':''} onchange="toggleDelegatePerm('${d.username}', 'pages')"> Pages</label>
+                                    <label class="flex items-center gap-1.5"><input type="checkbox" ${d.permissions?.theme?'checked':''} onchange="toggleDelegatePerm('${d.username}', 'theme')"> Thème</label>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="space-y-2 pt-2">
+                    <h4 class="font-bold text-amber-400">Élèves Inscrits (${students.length})</h4>
+                    ${students.map(s => `
+                        <div class="p-3 bg-stone-900 rounded-xl flex justify-between items-center flex-wrap gap-2">
+                            <div><b>${s.username}</b> (${s.lastName||'Non renseigné'}) - MDP: <span class="text-amber-300">${s.password}</span></div>
+                            <div class="flex gap-2">
+                                <button onclick="exportSingleCSV('${s.username}')" class="px-2.5 py-1 bg-stone-950 text-amber-200 border rounded-lg">CSV</button>
+                                <button onclick="resetPassword('${s.username}')" class="px-2.5 py-1 bg-stone-950 text-amber-300 border rounded-lg">Changer MDP</button>
+                                <button onclick="toggleMask('${s.username}')" class="px-2.5 py-1 bg-stone-950 rounded-lg">${s.status==='masked'?'Démasquer':'Masquer'}</button>
+                                <button onclick="deleteUser('${s.username}')" class="px-2.5 py-1 bg-red-600/30 text-red-300 rounded-lg">Supprimer</button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+        }
+
+        async function createNewUser(e) {
+            e.preventDefault();
+            let username = document.getElementById('new-user').value.trim();
+            let password = document.getElementById('new-pass').value.trim();
+            let role = document.getElementById('new-role').value;
+            let users = DB.get('users') || [];
+            if (users.some(u => u.username === username)) { alert("Cet identifiant existe déjà !"); return; }
+            users.push({ username, lastName: '', password, role, status: 'active', mustChangePass: true, birthday: '2009-01-01', email: '', permissions: {} });
+            await DB.set('users', users);
+            showToast("Succès", "Compte créé sur le Cloud Firebase !");
+        }
+
+        async function resetPassword(username) {
+            let newPass = prompt("Nouveau mot de passe pour " + username + " :");
+            if (!newPass) return;
+            let users = DB.get('users') || [], idx = users.findIndex(u => u.username === username);
+            if (idx !== -1) { users[idx].password = newPass; await DB.set('users', users); showToast("Succès", "Mot de passe mis à jour !"); }
+        }
+
+        async function toggleDelegatePerm(username, permKey) {
+            let users = DB.get('users') || [], idx = users.findIndex(u => u.username === username);
+            if (idx !== -1) {
+                if (!users[idx].permissions) users[idx].permissions = {};
+                users[idx].permissions[permKey] = !users[idx].permissions[permKey];
+                await DB.set('users', users);
+                showToast("Permissions", "Modifications enregistrées !");
+            }
+        }
+
+        function exportAllCSV() {
+            let csv = "Identifiant;Nom;Email;Role;MotDePasse\n";
+            (DB.get('users') || []).forEach(u => csv += `${u.username};${u.lastName||''};${u.email||''};${u.role};${u.password}\n`);
+            downloadCSV("tous_les_comptes.csv", csv);
+        }
+
+        function exportSingleCSV(username) {
+            let u = (DB.get('users') || []).find(x => x.username === username);
+            if(u) downloadCSV(`compte_${username}.csv`, `Identifiant;Nom;Email;Role;MotDePasse\n${u.username};${u.lastName||''};${u.email||''};${u.role};${u.password}\n`);
+        }
+
+        function downloadCSV(filename, text) {
+            let a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(text);
+            a.download = filename; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        }
+
+        async function toggleMask(username) {
+            let users = DB.get('users') || [], idx = users.findIndex(u => u.username === username);
+            if(idx !== -1) { users[idx].status = users[idx].status === 'masked' ? 'active' : 'masked'; await DB.set('users', users); }
+        }
+
+        async function deleteUser(username) {
+            if(!confirm("Supprimer ce compte ?")) return;
+            let users = (DB.get('users') || []).filter(u => u.username !== username);
+            await DB.set('users', users);
+        }
+
+        function renderAdminSurveillance() {
+            let msgs = (DB.get('messages') || []).filter(m => m.type === 'private');
+            return `<div class="dyn-card border p-6 rounded-3xl space-y-3"><h3 class="font-bold text-amber-300">Surveillance des Messages Privés</h3>
+                <div class="space-y-2 max-h-96 overflow-y-auto">${msgs.map(m => `<div class="p-3 bg-stone-900 border rounded-xl"><span class="font-bold text-amber-400">De ${m.sender} vers ${m.recipient}:</span> <p class="text-amber-100">${m.text}</p></div>`).join('')}</div></div>`;
+        }
+
+        function renderAdminQuizzes() {
+            let quizzes = DB.get('quizzes') || [], subs = DB.get('quiz_submissions') || {};
+            return `<div class="dyn-card border p-6 rounded-3xl space-y-4">
+                <h3 class="font-bold text-amber-300">Créer un Quiz (Multi-questions)</h3>
+                <form onsubmit="createQuiz(event)" class="space-y-3">
+                    <input type="text" id="qz-title" required placeholder="Titre du quiz..." class="w-full p-2.5 bg-stone-900 border rounded-xl text-amber-100">
+                    <div id="qz-questions-container" class="space-y-3">
+                        <div class="p-3 bg-stone-900 border rounded-xl space-y-2 q-block">
+                            <input type="text" placeholder="Intitulé de la question..." class="q-text w-full p-2 bg-stone-950 border rounded-lg" required>
+                            <div class="grid grid-cols-2 gap-2">
+                                <input type="text" placeholder="Option A" class="q-opt-0 p-2 bg-stone-950 rounded" required>
+                                <input type="text" placeholder="Option B" class="q-opt-1 p-2 bg-stone-950 rounded" required>
+                                <input type="text" placeholder="Option C" class="q-opt-2 p-2 bg-stone-950 rounded">
+                                <input type="text" placeholder="Option D" class="q-opt-3 p-2 bg-stone-950 rounded">
+                            </div>
+                            <input type="number" min="0" max="3" value="0" placeholder="Index bonne réponse (0=A, 1=B...)" class="q-correct w-full p-2 bg-stone-950 rounded" required>
+                        </div>
+                    </div>
+                    <button type="button" onclick="addQuizQuestion()" class="px-3 py-1.5 bg-stone-900 border rounded-xl text-amber-200 font-bold">+ Ajouter une question</button>
+                    <button type="submit" class="w-full py-2.5 dyn-btn text-white font-bold rounded-xl">Publier le Quiz</button>
+                </form>
+                <div class="space-y-3 pt-4 border-t">
+                    <h4 class="font-bold text-amber-300">Rapport des résultats des élèves</h4>
+                    ${Object.keys(subs).map(user => `<div><b>${user}</b>: ${subs[user].map(r => `${r.quizTitle} (${r.score}/${r.total})`).join(', ')}</div>`).join('')}
+                </div></div>`;
+        }
+
+        function addQuizQuestion() {
+            let c = document.getElementById('qz-questions-container'), div = document.createElement('div');
+            div.className = "p-3 bg-stone-900 border rounded-xl space-y-2 q-block";
+            div.innerHTML = `<input type="text" placeholder="Intitulé de la question..." class="q-text w-full p-2 bg-stone-950 border rounded-lg" required><div class="grid grid-cols-2 gap-2"><input type="text" placeholder="Option A" class="q-opt-0 p-2 bg-stone-950 rounded" required><input type="text" placeholder="Option B" class="q-opt-1 p-2 bg-stone-950 rounded" required><input type="text" placeholder="Option C" class="q-opt-2 p-2 bg-stone-950 rounded"><input type="text" placeholder="Option D" class="q-opt-3 p-2 bg-stone-950 rounded"></div><input type="number" min="0" max="3" value="0" placeholder="Index bonne réponse" class="q-correct w-full p-2 bg-stone-950 rounded" required>`;
+            c.appendChild(div);
+        }
+
+        async function createQuiz(e) {
+            e.preventDefault();
+            let title = document.getElementById('qz-title').value, questions = [];
+            document.querySelectorAll('.q-block').forEach(b => {
+                let question = b.querySelector('.q-text').value;
+                let options = [b.querySelector('.q-opt-0').value, b.querySelector('.q-opt-1').value, b.querySelector('.q-opt-2').value, b.querySelector('.q-opt-3').value].filter(x=>x);
+                let correct = parseInt(b.querySelector('.q-correct').value);
+                questions.push({ question, options, correct });
+            });
+            let quizzes = DB.get('quizzes') || []; 
+            quizzes.push({ id: Date.now(), title, questions });
+            await DB.set('quizzes', quizzes);
+            showToast("Succès", "Quiz publié !");
+        }
+
+        function renderAdminAppreciations() {
+            let users = (DB.get('users') || []).filter(u => u.role === 'student'), allApp = DB.get('appreciations') || {};
+            return `<div class="dyn-card border p-6 rounded-3xl space-y-4"><h3 class="font-bold text-amber-300">Saisie des Appréciations</h3>
+                <table class="w-full text-left"><thead><tr class="border-b text-amber-400"><th class="p-2">Élève</th><th class="p-2">T1</th><th class="p-2">T2</th><th class="p-2">T3</th><th class="p-2">Publier</th><th class="p-2">Action</th></tr></thead>
+                <tbody>${users.map(u => {
+                    let a = allApp[u.username] || { t1: '', t2: '', t3: '', published: false };
+                    return `<tr class="border-b"><td class="p-2 font-bold">${u.username}</td>
+                    <td class="p-2"><textarea id="t1_${u.username}" class="w-full p-1 bg-stone-900 rounded">${a.t1}</textarea></td>
+                    <td class="p-2"><textarea id="t2_${u.username}" class="w-full p-1 bg-stone-900 rounded">${a.t2}</textarea></td>
+                    <td class="p-2"><textarea id="t3_${u.username}" class="w-full p-1 bg-stone-900 rounded">${a.t3}</textarea></td>
+                    <td class="p-2 text-center"><input type="checkbox" id="pub_${u.username}" ${a.published?'checked':''}></td>
+                    <td class="p-2"><button onclick="saveApp('${u.username}')" class="px-2 py-1 dyn-btn text-white rounded font-bold">Enregistrer</button></td></tr>`;
+                }).join('')}</tbody></table></div>`;
+        }
+
+        async function saveApp(username) {
+            let all = DB.get('appreciations') || {};
+            all[username] = {
+                t1: document.getElementById(`t1_${username}`).value,
+                t2: document.getElementById(`t2_${username}`).value,
+                t3: document.getElementById(`t3_${username}`).value,
+                published: document.getElementById(`pub_${username}`).checked
+            };
+            await DB.set('appreciations', all);
+            showToast("Succès", "Appréciations enregistrées !");
+        }
+
+        function renderAdminDocs() {
+            let revisions = DB.get('revision_sheets') || [], exams = DB.get('exam_subjects') || [];
+            return `<div class="dyn-card border p-6 rounded-3xl space-y-6">
+                <h3 class="font-bold text-amber-300 text-sm">Gestion des Fiches de Révision et Sujets</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <form onsubmit="uploadDoc(event, 'revision_sheets')" class="p-4 bg-stone-900 rounded-2xl border space-y-2">
+                        <h4 class="font-bold text-amber-400">Ajouter une Fiche de Révision</h4>
+                        <input type="text" id="rev-title" required placeholder="Titre..." class="w-full p-2 bg-stone-950 border rounded-xl text-amber-100">
+                        <input type="file" id="rev-file" required accept=".pdf,image/*" class="w-full p-2 bg-stone-950 border rounded-xl text-amber-100 text-xs">
+                        <button type="submit" class="w-full py-2 dyn-btn text-white font-bold rounded-xl">Importer Fiche</button>
+                    </form>
+                    <form onsubmit="uploadDoc(event, 'exam_subjects')" class="p-4 bg-stone-900 rounded-2xl border space-y-2">
+                        <h4 class="font-bold text-amber-400">Ajouter un Sujet / Exercice</h4>
+                        <input type="text" id="ex-title" required placeholder="Titre..." class="w-full p-2 bg-stone-950 border rounded-xl text-amber-100">
+                        <input type="file" id="ex-file" required accept=".pdf,image/*" class="w-full p-2 bg-stone-950 border rounded-xl text-amber-100 text-xs">
+                        <button type="submit" class="w-full py-2 dyn-btn text-white font-bold rounded-xl">Importer Sujet</button>
+                    </form>
+                </div>
+                <div class="space-y-2 pt-2">
+                    <h4 class="font-bold text-amber-400">Documents actuels</h4>
+                    ${revisions.map((d, i) => `<div class="p-2 bg-stone-900 rounded flex justify-between"><span>[Fiche] ${d.title}</span><button onclick="deleteDoc('revision_sheets', ${i})" class="text-red-400">Supprimer</button></div>`).join('')}
+                    ${exams.map((d, i) => `<div class="p-2 bg-stone-900 rounded flex justify-between"><span>[Sujet] ${d.title}</span><button onclick="deleteDoc('exam_subjects', ${i})" class="text-red-400">Supprimer</button></div>`).join('')}
+                </div>
+            </div>`;
+        }
+
+        function uploadDoc(e, type) {
+            e.preventDefault();
+            let titleId = type === 'revision_sheets' ? 'rev-title' : 'ex-title';
+            let fileId = type === 'revision_sheets' ? 'rev-file' : 'ex-file';
+            let title = document.getElementById(titleId).value;
+            let file = document.getElementById(fileId).files[0];
+            if (!file) return;
+
+            let reader = new FileReader();
+            reader.onload = async (ev) => {
+                let list = DB.get(type) || [];
+                list.push({ title, fileData: ev.target.result, fileType: file.type });
+                await DB.set(type, list);
+                showToast("Succès", "Document importé sur le cloud !");
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function deleteDoc(type, idx) {
+            let list = DB.get(type) || [];
+            list.splice(idx, 1);
+            await DB.set(type, list);
+        }
+
+        function renderAdminPages() {
+            let hidden = DB.get('hidden_pages') || [];
+            let pages = [{ id: 'home', label: 'Accueil' }, { id: 'appreciations', label: 'Appréciations' }, { id: 'chat', label: 'Messagerie' }, { id: 'calendar', label: 'Agenda' }, { id: 'quizzes', label: 'Quiz' }, { id: 'revisions', label: 'Fiches de Révision' }, { id: 'exams', label: 'Sujets & Exercices' }];
+            return `<div class="dyn-card border p-6 rounded-3xl space-y-4"><h3 class="font-bold text-amber-300">Masquer / Afficher les Pages</h3>
+                <div class="grid grid-cols-2 gap-2">${pages.map(p => `<label class="p-3 bg-stone-900 rounded-xl flex justify-between items-center"><span>${p.label}</span><input type="checkbox" ${hidden.includes(p.id)?'checked':''} onchange="togglePage('${p.id}')"></label>`).join('')}</div></div>`;
+        }
+        async function togglePage(id) {
+            let h = DB.get('hidden_pages') || [];
+            h.includes(id) ? h = h.filter(x=>x!==id) : h.push(id);
+            await DB.set('hidden_pages', h);
+            showToast("Succès", "Visibilité mise à jour !");
+        }
+
+        function renderAdminTheme() {
+            return `<div class="dyn-card border p-6 rounded-3xl space-y-4"><h3 class="font-bold text-amber-300">Thème & QR Code</h3>
+                <div class="space-y-2"><label class="block">Importer le QR Code (Image)</label><input type="file" accept="image/*" onchange="uploadQR(event)" class="w-full p-2 bg-stone-900 rounded"></div></div>`;
+        }
+        function uploadQR(e) {
+            let r = new FileReader();
+            r.onload = async (ev) => { 
+                await DB.set('home_qr_image', ev.target.result); 
+                showToast("Succès", "QR Code mis à jour sur le cloud !"); 
+            };
+            r.readAsDataURL(e.target.files[0]);
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            let u = document.getElementById('l-user').value.trim();
+            let p = document.getElementById('l-pass').value.trim();
+
+            // Rechargement direct depuis Firebase au moment de la connexion
+            if (db) {
+                try {
+                    let doc = await db.collection("leqg_data").doc("users").get();
+                    if (doc.exists) { cloudData.users = doc.data().value; }
+                } catch(err){}
+            }
+
+            let users = DB.get('users') || [];
+            let user = users.find(x => x.username === u && x.password === p);
+            if (user) { 
+                sessionStorage.setItem('leqg_current_user', JSON.stringify(user)); 
+                render(); 
+            } else { 
+                alert("Identifiant ou mot de passe incorrect"); 
+            }
+        }
+
+        async function saveSetup(e) {
+            e.preventDefault();
+            let user = getCurrentUser();
+            let users = DB.get('users') || [];
+            let idx = users.findIndex(u => u.username === user.username);
+            if(idx !== -1) {
+                users[idx].lastName = document.getElementById('s-lastname').value;
+                users[idx].email = document.getElementById('s-email').value;
+                users[idx].password = document.getElementById('s-pass').value;
+                users[idx].birthday = document.getElementById('s-bday').value;
+                users[idx].mustChangePass = false;
+                await DB.set('users', users);
+                sessionStorage.setItem('leqg_current_user', JSON.stringify(users[idx]));
+                render();
+            }
+        }
+
+        function logout() { 
+            sessionStorage.removeItem('leqg_current_user'); 
+            render(); 
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
